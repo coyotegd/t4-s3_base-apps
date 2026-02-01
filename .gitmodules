@@ -1,0 +1,3 @@
+[submodule "components/components"]
+	path = components/components
+	url = https://github.com/coyotegd/t4-s3_hal_bsp-lvgl.git
