@@ -1,23 +1,23 @@
 {
-  // Keep editor/tooling generic; avoid user-specific absolute paths
+  // Portable settings: avoid user-specific absolute paths
   "C_Cpp.intelliSenseEngine": "default",
   "idf.pythonInstallPath": "/usr/bin/python3",
   "idf.openOcdConfigs": [
     "board/esp32s3-builtin.cfg"
   ],
-  // Let users select their serial port in the ESP-IDF extension UI or pass -p on CLI
-  // "idf.port": "",
-  // Do not pin espIdfPath/toolsPath; the extension or environment should provide these
-  // "idf.espIdfPath": "",
-  // "idf.toolsPath": "",
   "idf.customExtraVars": {
     "IDF_TARGET": "esp32s3"
   },
-  // Use workspace-relative build dir for clangd
   "clangd.arguments": [
     "--background-index",
     "--query-driver=**",
     "--compile-commands-dir=${workspaceFolder}/build"
   ],
   "idf.flashType": "UART"
+  // Users should configure the following locally as needed:
+  // "idf.espIdfPath": "",
+  // "idf.toolsPath": "",
+  // "idf.port": "",
+  // "idf.monitorPort": "",
+  // "clangd.path": ""
 }
