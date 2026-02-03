@@ -1,0 +1,1 @@
+/home/kenneth/Documents/PlatformIO/PIOesp-idf/idfsh.sh

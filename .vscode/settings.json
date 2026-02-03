@@ -13,7 +13,8 @@
     "--query-driver=**",
     "--compile-commands-dir=${workspaceFolder}/build"
   ],
-  "idf.flashType": "UART"
+  "idf.flashType": "UART",
+  "idf.port": "/dev/ttyACM0"
   // Users should configure the following locally as needed:
   // "idf.espIdfPath": "",
   // "idf.toolsPath": "",

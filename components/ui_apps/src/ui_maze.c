@@ -1,9 +1,9 @@
 /***************************************************
-  3D Maze Game - Ported from Arduino to ESP-IDF with LVGL
+  3D Maze Game - Ported from Arduino to ESP-IDF LVGL
   Original by Joel Krueger
 
   Find your way out of the maze using touch screen.
-  Get to the opening on one of the edges of the maze.
+  Get to the opening on the edge of the maze.
 
   Touch controls:
       center of touch screen -- move forward
@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <math.h>
 
 static const char *TAG = "ui_maze";
 
@@ -33,6 +34,8 @@ static lv_obj_t *player_marker = NULL;  // Player position indicator on map
 static lv_obj_t *stats_label = NULL;
 static lv_obj_t *btn_map = NULL;
 static lv_obj_t *btn_back = NULL;
+static lv_obj_t *btn_mode = NULL;
+static lv_obj_t *lbl_mode = NULL;
 static bool showing_map = false;
 
 // Canvas rendering with layer API (required in LVGL 9)
@@ -46,6 +49,8 @@ static const int maze_tall = 32;
 static int maze_row = 8;
 static uint32_t maze_col = 7;
 static int facing = 0;  // 0=north 1=east 2=south 3=west
+static bool suppress_throat_horiz = false;  // Hide inner top/bottom lines after stepping forward
+static bool strict_occupancy_mode = true;   // Draw only occupancy-driven walls (no corner connectors)
 
 // Top controls height (buttons + small margin)
 #define TOP_CONTROLS_H 60
@@ -97,8 +102,8 @@ static void content_size_changed_cb(lv_event_t *e) {
         lv_obj_set_style_border_opa(render_container, LV_OPA_TRANSP, 0);
         lv_obj_set_style_outline_width(render_container, 0, 0);
         lv_obj_set_style_outline_opa(render_container, LV_OPA_TRANSP, 0);
+        // Handle only CLICKED to avoid duplicate actions from PRESSED+CLICKED
         lv_obj_add_event_cb(render_container, touch_event_handler, LV_EVENT_CLICKED, NULL);
-        lv_obj_add_event_cb(render_container, touch_event_handler, LV_EVENT_PRESSED, NULL);
     }
     lv_canvas_set_buffer(render_container, canvas_buffer, w, h, LV_COLOR_FORMAT_RGB565);
     lv_obj_set_size(render_container, w, h);
@@ -113,6 +118,7 @@ static void content_size_changed_cb(lv_event_t *e) {
 #define LINE_COLOR lv_color_hex(0x00FFFF)  // Cyan
 #define BG_COLOR lv_color_hex(0x003030)    // Dark cyan
 #define MAP_COLOR lv_color_hex(0x000070)   // Dark blue (near navy) for map
+#define PERSPECTIVE_SHORTEN 10             // Shorten connectors by 10px at vanishing point
 
 // Maze data - 32x32 bit arrays (each row is a 32-bit word, 1=wall, 0=empty)
 static uint32_t maze[3][32] = {
@@ -226,6 +232,7 @@ static void draw_map_view(void);
 static void touch_event_handler(lv_event_t *e);
 static void btn_map_event_cb(lv_event_t *e);
 static void btn_back_event_cb(lv_event_t *e);
+static void btn_mode_event_cb(lv_event_t *e);
 static bool check_wall_at(int row, uint32_t col);
 static void move_forward(void);
 static void turn_left(void);
@@ -239,6 +246,32 @@ static bool check_wall_at(int row, uint32_t col) {
         return true;  // Out of bounds = wall
     }
     return (maze[level][row] & (1UL << (31 - col))) != 0;
+}
+
+// Check wall using relative offsets from player: forward (>0 toward facing), right (>0 to the right)
+static inline bool check_wall_rel(int off_forward, int off_right) {
+    int r = maze_row;
+    int c = (int)maze_col;
+
+    switch (facing) {
+        case 0: // North
+            r -= off_forward;
+            c += off_right;
+            break;
+        case 1: // East
+            r += off_right;
+            c += off_forward;
+            break;
+        case 2: // South
+            r += off_forward;
+            c -= off_right;
+            break;
+        case 3: // West
+            r -= off_right;
+            c -= off_forward;
+            break;
+    }
+    return check_wall_at(r, (uint32_t)c);
 }
 
 // Update stats label with direction and position
@@ -272,21 +305,20 @@ static void draw_canvas_line(int x1, int y1, int x2, int y2, lv_color_t color, i
     lv_draw_line(&layer, &line_dsc);
 }
 
-// Draw a filled rectangle using layer API
-static void draw_canvas_rect(int x, int y, int w, int h, lv_color_t color) {
-    lv_draw_rect_dsc_t rect_dsc;
-    lv_draw_rect_dsc_init(&rect_dsc);
-    rect_dsc.bg_color = color;
-    rect_dsc.bg_opa = LV_OPA_COVER;
-    rect_dsc.border_opa = LV_OPA_TRANSP;
-    rect_dsc.border_width = 0;
-    lv_area_t area;
-    area.x1 = SCALE_X(x);
-    area.y1 = SCALE_Y(y);
-    area.x2 = SCALE_X(x + w) - 1;
-    area.y2 = SCALE_Y(y + h) - 1;
-    lv_draw_rect(&layer, &rect_dsc, &area);
+// Draw a line shortened by `shorten_px` at the endpoint (x2,y2), pulling back toward (x1,y1)
+static void draw_canvas_line_shortened_to(int x1, int y1, int x2, int y2, int shorten_px, lv_color_t color, int width) {
+    int dx = x2 - x1;
+    int dy = y2 - y1;
+    int len = (int)sqrtf((float)(dx * dx + dy * dy));
+    if (len <= 0) {
+        draw_canvas_line(x1, y1, x2, y2, color, width);
+        return;
+    }
+    int end_x = x2 - (dx * shorten_px) / len;
+    int end_y = y2 - (dy * shorten_px) / len;
+    draw_canvas_line(x1, y1, end_x, end_y, color, width);
 }
+
 
 // Draw the 3D perspective view
 static void draw_3d_view(void) {
@@ -300,60 +332,150 @@ static void draw_3d_view(void) {
     // Initialize layer for drawing
     lv_canvas_init_layer(render_container, &layer);
     
-    // Get walls based on facing direction
-    bool wall_ahead = false;
-    bool wall_ahead_2 = false;  // Wall 2 spaces ahead
-    
-    switch (facing) {
-        case 0:  // North
-            wall_ahead = check_wall_at(maze_row - 1, maze_col);
-            wall_ahead_2 = check_wall_at(maze_row - 2, maze_col);
-            break;
-        case 1:  // East
-            wall_ahead = check_wall_at(maze_row, maze_col + 1);
-            wall_ahead_2 = check_wall_at(maze_row, maze_col + 2);
-            break;
-        case 2:  // South
-            wall_ahead = check_wall_at(maze_row + 1, maze_col);
-            wall_ahead_2 = check_wall_at(maze_row + 2, maze_col);
-            break;
-        case 3:  // West
-            wall_ahead = check_wall_at(maze_row, maze_col - 1);
-            wall_ahead_2 = check_wall_at(maze_row, maze_col - 2);
-            break;
-    }
+    // Occupancy around the player based on facing direction
+    bool wall_ahead      = check_wall_rel(1,  0);
+    bool wall_left_near  = check_wall_rel(0, -1);
+    bool wall_right_near = check_wall_rel(0,  1);
     
     // Replace perspective lines with two rectangle walls toward center (four vertical lines)
-    const int inner_left_x = 130;
-    const int inner_right_x = 190;
-    const int inner_top_y = 60;
-    const int inner_bottom_y = 110;
-    // thickness removed (unused)
+    // Opening geometry: centered around screen mid (160,85)
+    const int inner_top_y = 30;     // closer to top for larger near opening
+    const int inner_bottom_y = 140; // closer to bottom for larger near opening
+    const int opening_h = (inner_bottom_y - inner_top_y); // visible vertical span
+    const int opening_w = opening_h + 30;                 // widen by ~15px each side (adds +10 more from previous)
+    const int opening_center_x = 160;                     // screen center
+    const int inner_left_x = opening_center_x - (opening_w / 2);
+    const int inner_right_x = opening_center_x + (opening_w / 2);
 
-    ESP_LOGI(TAG, "Drawing side rectangle walls (vertical lines)");
-    // Keep only inner verticals near center
-    draw_canvas_line(inner_left_x, inner_top_y, inner_left_x, inner_bottom_y, LINE_COLOR, 2);
-    draw_canvas_line(inner_right_x, inner_top_y, inner_right_x, inner_bottom_y, LINE_COLOR, 2);
-    // From each end of these verticals, draw lines to closest corners
-    draw_canvas_line(inner_left_x, inner_top_y, 0, 0, LINE_COLOR, 2);          // Top-left
-    draw_canvas_line(inner_left_x, inner_bottom_y, 0, 170, LINE_COLOR, 2);      // Bottom-left
-    draw_canvas_line(inner_right_x, inner_top_y, 320, 0, LINE_COLOR, 2);        // Top-right
-    draw_canvas_line(inner_right_x, inner_bottom_y, 320, 170, LINE_COLOR, 2);   // Bottom-right
-    
-    // Draw distant wall (2 spaces ahead) - smaller rectangle in center
-    if (wall_ahead_2 && !wall_ahead) {
-        ESP_LOGI(TAG, "Drawing distant wall");
-        int far_x = 130;  // Center minus half width (320/2 - 60/2)
-        int far_y = 60;   // Center area
-        draw_canvas_rect(far_x, far_y, 60, 50, lv_color_hex(0x505050));
+    ESP_LOGI(TAG, "Drawing wireframe based on 2D occupancy");
+    ESP_LOGI(TAG, "Neighbors: ahead=%d left=%d right=%d fwd_left=%d fwd_right=%d",
+             wall_ahead, wall_left_near, wall_right_near,
+             check_wall_rel(1,-1), check_wall_rel(1,1));
+    // Remove far side small rectangles; use classic diagonals to corners
+
+    // Invariant: R9C8 facing North (row=8,col=7,facing=0) with open corridors left/right/ahead
+    // must render inner verticals, and top/bottom horizontals extended to display edges,
+    // with no horizontal segment between inner verticals. Do not change this geometry.
+    bool is_r9c8n = (maze_row == 8 && maze_col == 7 && facing == 0);
+    if (is_r9c8n && !wall_ahead && !wall_left_near && !wall_right_near) {
+        ESP_LOGI(TAG, "R9C8N invariant view active");
+    }
+    // Draw corridor frame unconditionally when the path ahead is open
+    if (!wall_ahead) {
+        // Inner verticals (throat)
+        draw_canvas_line(inner_left_x, inner_top_y, inner_left_x, inner_bottom_y, LINE_COLOR, 2);
+        draw_canvas_line(inner_right_x, inner_top_y, inner_right_x, inner_bottom_y, LINE_COLOR, 2);
+
+        // Optionally add inner top/bottom to form full throat rectangle (R9C8 view)
+        if (!suppress_throat_horiz) {
+            // Extend horizontals only to display edges (no segment between inner verticals)
+            draw_canvas_line(0, inner_top_y, inner_left_x, inner_top_y, LINE_COLOR, 2);                 // top left extension
+            draw_canvas_line(inner_right_x, inner_top_y, 320, inner_top_y, LINE_COLOR, 2);              // top right extension
+            draw_canvas_line(0, inner_bottom_y, inner_left_x, inner_bottom_y, LINE_COLOR, 2);           // bottom left extension
+            draw_canvas_line(inner_right_x, inner_bottom_y, 320, inner_bottom_y, LINE_COLOR, 2);        // bottom right extension
+        }
+
+        // Perspective connectors: join inner corners to screen center (vanishing point) when in Connect mode
+        if (!strict_occupancy_mode) {
+            const int vanish_x = 160;
+            const int vanish_y = 85;
+            draw_canvas_line_shortened_to(inner_left_x,  inner_top_y,    vanish_x, vanish_y, PERSPECTIVE_SHORTEN, LINE_COLOR, 2);
+            draw_canvas_line_shortened_to(inner_right_x, inner_top_y,    vanish_x, vanish_y, PERSPECTIVE_SHORTEN, LINE_COLOR, 2);
+            draw_canvas_line_shortened_to(inner_left_x,  inner_bottom_y, vanish_x, vanish_y, PERSPECTIVE_SHORTEN, LINE_COLOR, 2);
+            draw_canvas_line_shortened_to(inner_right_x, inner_bottom_y, vanish_x, vanish_y, PERSPECTIVE_SHORTEN, LINE_COLOR, 2);
+        }
+
+        // Far-end vertical connectors at 3 and 5 steps ahead when both side walls exist
+        const int vanish_x = 160;
+        const int vanish_y = 85;
+        // Depth factors (0 near throat, 1 at vanishing point)
+        const double t3 = 0.50;  // approx 3 steps
+        const double t5 = 0.75;  // approx 5 steps
+        // At 3 steps ahead
+        if (check_wall_rel(3, -1) && check_wall_rel(3, 1)) {
+            int lx3 = (int)(inner_left_x  + t3 * (vanish_x - inner_left_x));
+            int rx3 = (int)(inner_right_x + t3 * (vanish_x - inner_right_x));
+            int y3_top = (int)(inner_top_y     + t3 * (vanish_y - inner_top_y));
+            int y3_bot = (int)(inner_bottom_y  + t3 * (vanish_y - inner_bottom_y));
+            draw_canvas_line(lx3, y3_top, lx3, y3_bot, LINE_COLOR, 2);
+            draw_canvas_line(rx3, y3_top, rx3, y3_bot, LINE_COLOR, 2);
+        }
+        // At 5 steps ahead
+        if (check_wall_rel(5, -1) && check_wall_rel(5, 1)) {
+            int lx5 = (int)(inner_left_x  + t5 * (vanish_x - inner_left_x));
+            int rx5 = (int)(inner_right_x + t5 * (vanish_x - inner_right_x));
+            int y5_top = (int)(inner_top_y     + t5 * (vanish_y - inner_top_y));
+            int y5_bot = (int)(inner_bottom_y  + t5 * (vanish_y - inner_bottom_y));
+            draw_canvas_line(lx5, y5_top, lx5, y5_bot, LINE_COLOR, 2);
+            draw_canvas_line(rx5, y5_top, rx5, y5_bot, LINE_COLOR, 2);
+        }
     }
     
-    // Draw wall ahead as a large rectangle
+    // Near side walls: draw outer verticals only when wall is present
+    if (wall_left_near) {
+        draw_canvas_line(0, 0, 0, 170, LINE_COLOR, 2);
+        // If corridor is open, connect edges to inner vertical to emphasize side wall
+        if (!wall_ahead) {
+            if (strict_occupancy_mode) {
+                // Legacy connectors and horizontals for strict mode
+                draw_canvas_line(0, 0, inner_left_x, inner_top_y, LINE_COLOR, 2);
+                draw_canvas_line(0, 170, inner_left_x, inner_bottom_y, LINE_COLOR, 2);
+                draw_canvas_line(0, inner_top_y, inner_left_x, inner_top_y, LINE_COLOR, 2);
+                draw_canvas_line(0, inner_bottom_y, inner_left_x, inner_bottom_y, LINE_COLOR, 2);
+            }
+            // In Connect mode, trapezoid is formed by outer vertical, inner vertical, and diagonals to vanishing point
+            // (diagonals are already drawn from inner corners to center above)
+        }
+    }
+    if (wall_right_near) {
+        draw_canvas_line(320, 0, 320, 170, LINE_COLOR, 2);
+        if (!wall_ahead) {
+            if (strict_occupancy_mode) {
+                // Legacy connectors and horizontals for strict mode
+                draw_canvas_line(320, 0, inner_right_x, inner_top_y, LINE_COLOR, 2);
+                draw_canvas_line(320, 170, inner_right_x, inner_bottom_y, LINE_COLOR, 2);
+                draw_canvas_line(inner_right_x, inner_top_y, 320, inner_top_y, LINE_COLOR, 2);
+                draw_canvas_line(inner_right_x, inner_bottom_y, 320, inner_bottom_y, LINE_COLOR, 2);
+            }
+            // In Connect mode, trapezoid is formed by outer vertical, inner vertical, and diagonals to vanishing point
+            // (diagonals are already drawn from inner corners to center above)
+        }
+    }
+
+    // Turn-and-step cues removed; handled by conditional diagonals above
+
+    // Removed small diagonal frames; extend view via corner diagonals
+
+    // Throat continuity lines are handled above when forward is open
+    
+    // Far-end square removed to avoid confusion; render only actual wall faces
+
+    // Removed conditional far-3 wall; use far-end square above for open corridor depth
+    
+    // Wall ahead as a large wireframe rectangle
     if (wall_ahead) {
-        ESP_LOGI(TAG, "Drawing wall ahead");
-        int wall_x = 20;  // (320 - 280) / 2
-        int wall_y = 9;   // (170 - 152) / 2
-        draw_canvas_rect(wall_x, wall_y, 280, 152, lv_color_hex(0x808080));
+        ESP_LOGI(TAG, "Drawing wall ahead (scaled 90%% with perspective connectors)");
+        // Use explicit screen extents to avoid any mismatch
+        const int screen_w = 320;
+        const int screen_h = 170;
+        int wall_w = (screen_w * 90) / 100;
+        int wall_h = (screen_h * 90) / 100;
+        int wall_x = (screen_w - wall_w) / 2;
+        int wall_y = (screen_h - wall_h) / 2;
+        // Wall rectangle (scaled to 90% of canvas and centered)
+        draw_canvas_line(wall_x,        wall_y,        wall_x+wall_w, wall_y,        LINE_COLOR, 2); // top
+        draw_canvas_line(wall_x,        wall_y+wall_h, wall_x+wall_w, wall_y+wall_h, LINE_COLOR, 2); // bottom
+        draw_canvas_line(wall_x,        wall_y,        wall_x,        wall_y+wall_h, LINE_COLOR, 2); // left
+        draw_canvas_line(wall_x+wall_w, wall_y,        wall_x+wall_w, wall_y+wall_h, LINE_COLOR, 2); // right
+        // In Connect mode, draw perspective connectors from wall corners to vanishing point
+        if (!strict_occupancy_mode) {
+            const int vanish_x = 160;
+            const int vanish_y = 85;
+            draw_canvas_line_shortened_to(wall_x,           wall_y,           vanish_x, vanish_y, PERSPECTIVE_SHORTEN, LINE_COLOR, 2); // top-left corner
+            draw_canvas_line_shortened_to(wall_x+wall_w,    wall_y,           vanish_x, vanish_y, PERSPECTIVE_SHORTEN, LINE_COLOR, 2); // top-right corner
+            draw_canvas_line_shortened_to(wall_x,           wall_y+wall_h,    vanish_x, vanish_y, PERSPECTIVE_SHORTEN, LINE_COLOR, 2); // bottom-left corner
+            draw_canvas_line_shortened_to(wall_x+wall_w,    wall_y+wall_h,    vanish_x, vanish_y, PERSPECTIVE_SHORTEN, LINE_COLOR, 2); // bottom-right corner
+        }
     }
     
     // Side wall overlays can be added here if needed based on wall_left/wall_right
@@ -585,6 +707,8 @@ static void move_forward(void) {
     }
     
     if (can_move) {
+        // After stepping forward, suppress inner horizontals to show R8C8-style view
+        suppress_throat_horiz = true;
         check_level_complete();
         if (showing_map) {
             update_player_marker();
@@ -599,6 +723,8 @@ static void turn_left(void) {
     if (facing < 0) {
         facing = 3;
     }
+    // Restore inner horizontals on turn (R9C8-style view)
+    suppress_throat_horiz = false;
     if (showing_map) {
         update_player_marker();
     } else {
@@ -611,6 +737,8 @@ static void turn_right(void) {
     if (facing > 3) {
         facing = 0;
     }
+    // Restore inner horizontals on turn (R9C8-style view)
+    suppress_throat_horiz = false;
     if (showing_map) {
         update_player_marker();
     } else {
@@ -656,6 +784,7 @@ static void next_level(void) {
     maze_row = 8;
     maze_col = 7;
     facing = 0;
+    suppress_throat_horiz = false;
     
     draw_3d_view();
 }
@@ -663,7 +792,8 @@ static void next_level(void) {
 // Touch event handler
 static void touch_event_handler(lv_event_t *e) {
     lv_event_code_t code = lv_event_get_code(e);
-    if (code != LV_EVENT_CLICKED && code != LV_EVENT_PRESSED) return;
+    // Process only CLICKED to prevent double move/turn
+    if (code != LV_EVENT_CLICKED) return;
     
     // Ignore touches when showing map view - only Back button should work
     if (showing_map) {
@@ -725,6 +855,20 @@ static void btn_back_event_cb(lv_event_t *e) {
     }
 }
 
+// Occupancy mode toggle button handler
+static void btn_mode_event_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) == LV_EVENT_CLICKED) {
+        strict_occupancy_mode = !strict_occupancy_mode;
+        if (lbl_mode) {
+            lv_label_set_text(lbl_mode, strict_occupancy_mode ? "Strict" : "Connect");
+        }
+        if (!showing_map) {
+            draw_3d_view();
+        }
+        ESP_LOGI(TAG, "Strict occupancy mode: %s", strict_occupancy_mode ? "ON" : "OFF");
+    }
+}
+
 // Cleanup function
 void ui_maze_cleanup(void) {
     // Free canvas buffers
@@ -751,6 +895,8 @@ void ui_maze_cleanup(void) {
     stats_label = NULL;
     btn_map = NULL;
     btn_back = NULL;
+    btn_mode = NULL;
+    lbl_mode = NULL;
     showing_map = false;
 }
 
@@ -767,6 +913,7 @@ void ui_maze_show(void) {
     maze_col = 7;
     facing = 0;
     showing_map = false;
+    suppress_throat_horiz = false;
     
     // Create main container
     maze_screen = lv_obj_create(NULL);
@@ -847,6 +994,26 @@ void ui_maze_show(void) {
     lv_label_set_text(lbl_map, "Map");
     lv_obj_set_style_text_color(lbl_map, lv_color_white(), 0);
     lv_obj_center(lbl_map);
+
+    // Mode Toggle Button - Neon style
+    btn_mode = lv_btn_create(top_bar);
+    lv_obj_set_size(btn_mode, 120, 50);
+    lv_obj_set_style_bg_opa(btn_mode, LV_OPA_TRANSP, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_color(btn_mode, lv_palette_main(LV_PALETTE_CYAN), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_width(btn_mode, 3, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_radius(btn_mode, 10, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_shadow_width(btn_mode, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+    // Pressed style
+    lv_obj_set_style_bg_opa(btn_mode, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(btn_mode, lv_palette_main(LV_PALETTE_CYAN), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_shadow_width(btn_mode, 20, LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_shadow_color(btn_mode, lv_palette_main(LV_PALETTE_CYAN), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_add_event_cb(btn_mode, btn_mode_event_cb, LV_EVENT_CLICKED, NULL);
+
+    lbl_mode = lv_label_create(btn_mode);
+    lv_label_set_text(lbl_mode, strict_occupancy_mode ? "Strict" : "Connect");
+    lv_obj_set_style_text_color(lbl_mode, lv_color_white(), 0);
+    lv_obj_center(lbl_mode);
     
     // Back Button - Neon style
     btn_back = lv_btn_create(top_bar);

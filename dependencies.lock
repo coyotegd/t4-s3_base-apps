@@ -2,7 +2,7 @@ dependencies:
   espressif/cmake_utilities:
     dependencies: []
     source:
-      path: /home/kenneth/Documents/PlatformIO/PIOesp-idf/t4-s3_base-apps/external/hal_bsp/managed_components/espressif__cmake_utilities
+      path: /home/kenneth/test_repos/t4-s3_base-apps/external/hal_bsp/managed_components/espressif__cmake_utilities
       type: local
     version: 1.1.1
   idf:
@@ -12,6 +12,6 @@ dependencies:
 direct_dependencies:
 - espressif/cmake_utilities
 - idf
-manifest_hash: db60e2fc05e3325b249b0b1512b8b2b5e68ac25debda6f10658a95440b69b655
+manifest_hash: af7e6477c7194997ac2c7cf2753179eac419e72cc9810364e22408fe4ee9e7bb
 target: esp32s3
 version: 2.0.0
