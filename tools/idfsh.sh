@@ -1,1 +1,1 @@
-/home/kenneth/Documents/PlatformIO/PIOesp-idf/idfsh.sh
+../external/hal_bsp/tools/idfsh.sh

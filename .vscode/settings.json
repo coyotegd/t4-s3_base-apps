@@ -1,7 +1,5 @@
 {
-  // Portable settings: avoid user-specific absolute paths
   "C_Cpp.intelliSenseEngine": "default",
-  "idf.pythonInstallPath": "/usr/bin/python3",
   "idf.openOcdConfigs": [
     "board/esp32s3-builtin.cfg"
   ],
@@ -14,11 +12,11 @@
     "--compile-commands-dir=${workspaceFolder}/build"
   ],
   "idf.flashType": "UART",
-  "idf.port": "/dev/ttyACM0"
-  // Users should configure the following locally as needed:
-  // "idf.espIdfPath": "",
-  // "idf.toolsPath": "",
-  // "idf.port": "",
-  // "idf.monitorPort": "",
-  // "clangd.path": ""
+  "idf.buildPath": "${workspaceFolder}/build"
+  // User-specific paths (auto-configured by ESP-IDF extension):
+  // "idf.espIdfPath": "auto-detected or set via extension"
+  // "idf.toolsPath": "auto-detected or set via extension"
+  // "idf.pythonInstallPath": "auto-detected or set via extension"
+  // "idf.port": "select your port when flashing"
+  // "clangd.path": "auto-detected from toolsPath"
 }

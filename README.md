@@ -2,45 +2,136 @@
 
 ESP32-S3 applications using the t4-s3_hal_bsp-lvgl base components.
 
-## Setup
+## 🚀 Quick Start for Beginners
 
-**⚠️ Important: Use `--recursive` when cloning!**
+### Prerequisites
 
-This project uses **Git Submodules** to include the [t4-s3_hal_bsp-lvgl](https://github.com/coyotegd/t4-s3_hal_bsp-lvgl) base components. The `--recursive` flag automatically clones the submodule along with this repository.
+1. **Install VS Code** - [Download here](https://code.visualstudio.com/)
+2. **Install ESP-IDF Extension** in VS Code:
+   - Open VS Code
+   - Press `Ctrl+Shift+X` (Extensions)
+   - Search for "ESP-IDF"
+   - Install "Espressif IDF" extension
+   - Follow the extension's setup wizard to install ESP-IDF v5.5
 
-Clone this repository with submodules:
+### Clone & Setup
+
+**⚠️ CRITICAL: Use `--recursive` when cloning!**
+
+This project uses **Git Submodules** - it depends on the [t4-s3_hal_bsp-lvgl](https://github.com/coyotegd/t4-s3_hal_bsp-lvgl) library which is automatically downloaded with the `--recursive` flag.
 
 ```bash
 git clone --recursive https://github.com/coyotegd/t4-s3_base-apps.git
+cd t4-s3_base-apps
 ```
 
-**Why `--recursive`?**
-- The base components (HAL, BSP, LVGL) are stored in a separate repository
-- They are linked as a submodule in `components/components/`
-- Without `--recursive`, you'll get an empty `components/components/` directory and the build will fail
+**What does `--recursive` do?**
+- Downloads this main project
+- Automatically downloads the `t4-s3_hal_bsp-lvgl` submodule into `external/hal_bsp/`
+- Without it, `external/hal_bsp/` will be empty and the build will fail
 
-If you already cloned without `--recursive`, initialize the submodule:
+**Already cloned without `--recursive`? No problem:**
 
 ```bash
 cd t4-s3_base-apps
 git submodule update --init --recursive
 ```
 
-## Build
+### Build & Flash
 
+1. **Open in VS Code:**
+   ```bash
+   code t4-s3_base-apps
+   ```
+
+2. **Reload Window** (to activate ESP-IDF extension):
+   - Press `Ctrl+Shift+P`
+   - Type "Developer: Reload Window"
+   - Press Enter
+
+3. **Build the Project:**
+   - Click the **Build** button in the status bar (bottom of VS Code)
+   - Or press `F1` → "ESP-IDF: Build your project"
+   - Or use terminal: `idf.py build`
+
+4. **Connect your ESP32-S3 board** via USB
+
+5. **Flash to Device:**
+   - Click the **Flash** button in status bar
+   - Select your serial port when prompted (e.g., `/dev/ttyUSB0` or `COM3`)
+   - Or use terminal: `idf.py -p /dev/ttyUSB0 flash monitor`
+
+6. **Monitor Output:**
+   - Click the **Monitor** button in status bar
+   - Or the flash command above includes monitoring
+
+## �️ Development Tools
+
+### ESP-IDF Helper Script (`idfsh`)
+
+This project includes an interactive helper for common ESP-IDF tasks. The script is located in the **hal_bsp submodule** (`external/hal_bsp/tools/idfsh.sh`) and is available via symlink at `tools/idfsh.sh`.
+
+**Usage:**
 ```bash
-idf.py build
+# From project root
+source tools/idfsh.sh
+idfsh
 ```
 
-## Flash
+**Features:**
+- Interactive menu for build/flash/monitor
+- Aggressive full clean (removes `build/` and `managed_components/`)
+- Ad-hoc port/baud selection
+- Enhanced size report with color-coded status
+- CMake reconfigure
+- Chip erase with confirmation
 
-```bash
-idf.py flash monitor
+See `tools/README.md` for full documentation.
+
+**Note:** After updating the hal_bsp submodule, the tools will be sourced directly from `external/hal_bsp/tools/`. Currently, a local copy is provided for convenience.
+
+## �🔧 Workspace Configuration
+
+This project uses **fully portable settings** - no hardcoded paths!
+
+**What's included in `.vscode/settings.json`:**
+- Workspace-relative paths only (`${workspaceFolder}`)
+- Project-specific settings (target: ESP32-S3)
+- IntelliSense configuration
+
+**What's auto-configured:**
+- ESP-IDF installation path
+- Python environment
+- Toolchain paths
+- Serial port (you select when flashing)
+
+After cloning, just open in VS Code and everything works! No manual path configuration needed.
+
+## 📁 Project Structure
+
+```
+t4-s3_base-apps/
+├── external/
+│   └── hal_bsp/          ← t4-s3_hal_bsp-lvgl submodule (HAL, BSP, LVGL)
+├── components/
+│   └── ui_apps/          ← Custom UI applications (maze game, launcher, etc.)
+├── main/
+│   ├── main.c            ← Application entry point
+│   └── ui_board_settings.c ← Custom home screen (wraps HAL BSP home)
+├── .vscode/              ← VS Code settings (portable)
+├── CMakeLists.txt        ← Project build configuration
+├── partitions.csv        ← Flash partition table
+├── sdkconfig.defaults    ← Default ESP-IDF configuration
+└── README.md             ← This file
 ```
 
-## Components
+## 🎮 What's Included
 
-This project uses [t4-s3_hal_bsp-lvgl](https://github.com/coyotegd/t4-s3_hal_bsp-lvgl) as a submodule for base components.
+- **3D Maze Game** - Canvas-based 3D maze with LVGL 9
+- **Application Launcher** - Main menu for apps
+- **Board Settings** - Custom home screen (replaces HAL BSP home)
+- **HAL BSP Integration** - Full hardware abstraction (display, touch, power)
+- **LVGL 9.2** - Modern UI framework with canvas rendering
 
 ## Development Notes
 
