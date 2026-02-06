@@ -1,6 +1,7 @@
 #include "ui_launcher.h"
 #include "ui_maze.h"
 #include "ui_sports.h"
+#include "ui_weather.h"
 #include "ui_private.h"
 #include "esp_log.h"
 
@@ -104,6 +105,13 @@ static void btn_sports_event_cb(lv_event_t *e) {
     if (lv_event_get_code(e) == LV_EVENT_CLICKED) {
         ESP_LOGI(TAG, "Sports button clicked");
         ui_sports_show();
+    }
+}
+
+static void btn_weather_event_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) == LV_EVENT_CLICKED) {
+        ESP_LOGI(TAG, "Weather button clicked");
+        ui_weather_show();
     }
 }
 
@@ -212,6 +220,9 @@ void ui_launcher_init(void) {
     
     // Sports Button
     create_neon_btn(btn_row, LV_SYMBOL_GPS, "Sports", lv_palette_main(LV_PALETTE_GREEN), btn_sports_event_cb);
+    
+    // Weather Button
+    create_neon_btn(btn_row, LV_SYMBOL_TINT, "Weather", lv_palette_main(LV_PALETTE_CYAN), btn_weather_event_cb);
     
     // Settings Button
     create_neon_btn(btn_row, LV_SYMBOL_SETTINGS, "Settings", lv_color_hex(0xFF3300), btn_settings_event_cb);
