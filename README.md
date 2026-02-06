@@ -1,6 +1,6 @@
 # t4-s3_base-apps
 
-ESP32-S3 applications using the t4-s3_hal_bsp-lvgl base components.
+This is a Parent-Child ESP32-S3 application using the t4-s3_hal_bsp-lvgl as base components for apps.
 
 ## 🚀 Quick Start for Beginners
 
@@ -26,6 +26,7 @@ cd t4-s3_base-apps
 ```
 
 **What does `--recursive` do?**
+
 - Downloads this main project
 - Automatically downloads the `t4-s3_hal_bsp-lvgl` submodule into `external/hal_bsp/`
 - Without it, `external/hal_bsp/` will be empty and the build will fail
@@ -40,6 +41,7 @@ git submodule update --init --recursive
 ### Build & Flash
 
 1. **Open in VS Code:**
+
    ```bash
    code t4-s3_base-apps
    ```
@@ -72,6 +74,7 @@ git submodule update --init --recursive
 This project includes an interactive helper for common ESP-IDF tasks. The script is located in the **hal_bsp submodule** (`external/hal_bsp/tools/idfsh.sh`) and is available via symlink at `tools/idfsh.sh`.
 
 **Usage:**
+
 ```bash
 # From project root
 source tools/idfsh.sh
@@ -79,6 +82,7 @@ idfsh
 ```
 
 **Features:**
+
 - Interactive menu for build/flash/monitor
 - Aggressive full clean (removes `build/` and `managed_components/`)
 - Ad-hoc port/baud selection
@@ -95,11 +99,13 @@ See `tools/README.md` for full documentation.
 This project uses **fully portable settings** - no hardcoded paths!
 
 **What's included in `.vscode/settings.json`:**
+
 - Workspace-relative paths only (`${workspaceFolder}`)
 - Project-specific settings (target: ESP32-S3)
 - IntelliSense configuration
 
 **What's auto-configured:**
+
 - ESP-IDF installation path
 - Python environment
 - Toolchain paths
@@ -109,7 +115,7 @@ After cloning, just open in VS Code and everything works! No manual path configu
 
 ## 📁 Project Structure
 
-```
+```text
 t4-s3_base-apps/
 ├── external/
 │   └── hal_bsp/          ← t4-s3_hal_bsp-lvgl submodule (HAL, BSP, LVGL)
@@ -133,19 +139,43 @@ t4-s3_base-apps/
 - **HAL BSP Integration** - Full hardware abstraction (display, touch, power)
 - **LVGL 9.2** - Modern UI framework with canvas rendering
 
+## 🔮 Planned Features
+
+### Internet-Connected Apps
+
+#### Weather App with Live Conditions
+
+- **Animated Weather Icons**: Lottie-based weather animations (sun, clouds, rain, snow) displayed in button
+- **Touch Interactions**:
+  - `LV_EVENT_PRESSED`: Visual press feedback with Lottie ripple animation
+  - `LV_EVENT_RELEASED`: Execute button action + release animation
+- **Auto-refresh**: Background timer (`lv_timer_t`) to periodically fetch weather updates
+- **Manual Refresh**: Tap button to open detailed forecast and force weather data refresh
+- **Dynamic Updates**: Seamlessly transition between weather states (sunny → cloudy → rainy) based on live data
+- **Integration**: Vector-based Lottie animations ensure crisp display at any button size
+
+#### Sports App with Live Scores & Updates
+
+- **Real-time Data**: Fetch live scores, standings, and game schedules from sports APIs
+- **Animated UI Elements**: Lottie animations for team logos, score updates, and loading states
+- **Touch Interactions**: Press/release events for team selection, game navigation, and refresh
+- **Auto-refresh**: Periodic background updates for live games and score changes
+- **Manual Refresh**: User-triggered data sync for latest scores and standings
+- **Multi-sport Support**: Configurable for various sports (football, basketball, baseball, etc.)
+
 ## Development Notes
 
 ### Customizing HAL BSP UI (Linker Wrap Trick)
 
-This project uses a GCC linker feature called "wrapping" to replace the original library's Home screen with our own custom "Board Settings" page, without modifying the underlying library source code.
+This project uses a GCC linker feature called "wrapping" to replace the original library's Home screen with our own board "Settings" page, without modifying the underlying library source code.
 
-**The Concept: An Independent Hub**
+#### The Concept: An Independent Hub
 
 We have created an **independent hub** (`main/ui_board_settings.c`) that serves as the new center of the application's settings.
 
-*   **Patterned after the Original:** It duplicates the style and button logic of the original library home page but removes unwanted elements (like date, time, and images).
+- **Patterned after the Original:** It duplicates the style and button logic of the original library home page but removes unwanted elements (like date, time, and images).
 
-*   **Fully Independent:** The original `ui_home.c` file is completely ignored for drawing the screen.
+- **Fully Independent:** The original `ui_home.c` file is completely ignored for drawing the screen.
 
     1. **It is defined in `hal_bsp`**
     In generic `t4-s3_hal_bsp-lvgl` code (specifically in `ui_home.c`), `show_home_view` is just a helper function that handles the event to switch navigation.
@@ -155,32 +185,30 @@ We have created an **independent hub** (`main/ui_board_settings.c`) that serves 
 
 target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=show_home_view" "-Wl,--wrap=ui_home_create")
 
-*   **Connected Ecosystem:** Even though the hub is new, its buttons still link to the complex, existing pages of the HAL BSP library (PMIC, Display, System Info), so we don't have to rewrite that functionality.
+- **Connected Ecosystem:** Even though the hub is new, its buttons still link to the complex, existing pages of the HAL BSP library (PMIC, Display, System Info), so we don't have to rewrite that functionality.
 
 **How it works:**
 
-1.  In `main/CMakeLists.txt`, we pass a flag to the linker: `-Wl,--wrap=show_home_view`.
-2.  This behaves like a "switcheroo". It tells the build system: "Whenever any part of the app tries to call
-    `show_home_view` (to go home), call `__wrap_show_home_view` instead."
-3.  We implement `__wrap_show_home_view` in `main/ui_board_settings.c`, which launches our custom independent hub
-    instead of the original home page ui_home (hub) in t4-s3_hal_bsp-lvgl.
+1. In `main/CMakeLists.txt`, we pass a flag to the linker: `-Wl,--wrap=show_home_view`.
+2. This behaves like a "switcheroo". It tells the build system: "Whenever any part of the app tries to call `show_home_view` (to go home), call `__wrap_show_home_view` instead."
+3. We implement `__wrap_show_home_view` in `main/ui_board_settings.c`, which launches our custom independent hub instead of the original home page ui_home (hub) in t4-s3_hal_bsp-lvgl.
 
 **Key Files:**
 
-*   `main/ui_board_settings.c`: The new independent hub implementation.
-*   `main/CMakeLists.txt`: Contains the `target_link_libraries` configuration with the `--wrap` option.
+- `main/ui_board_settings.c`: The new independent hub implementation.
+- `main/CMakeLists.txt`: Contains the `target_link_libraries` configuration with the `--wrap` option.
 
 **Why do this?**
 
-*   It allows us to keep the `external/hal_bsp` submodule clean and unmodified.
-*   We can update the submodule in the future without losing our UI customizations.
-*   Global calls (like "Back" gestures from other screens) automatically route to our custom screen.
+- It allows us to keep the `external/hal_bsp` submodule clean and unmodified.
+- We can update the submodule in the future without losing our UI customizations.
+- Global calls (like "Back" gestures from other screens) automatically route to our custom screen.
 
 ---
 
-# UI Apps - Canvas-Based Rendering with LVGL 9
+## UI Apps - Canvas-Based Rendering with LVGL 9
 
-## Overview
+### Overview
 
 The UI applications in this project use **canvas-based rendering** with LVGL 9's layer API. The maze game (`ui_maze.c`) was converted from widget-based rendering to canvas drawing for better performance and memory efficiency.
 
@@ -231,7 +259,7 @@ canvas_buffer = heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM);
 
 **Required in `sdkconfig`:**
 
-```
+```text
 CONFIG_LV_USE_CLIB_MALLOC=y
 ```
 
@@ -313,11 +341,13 @@ static void draw_canvas_line(int x1, int y1, int x2, int y2, lv_color_t color, i
 
 ### ❌ Problem: Incorrect Coordinate Dimensions
 
-**Symptoms:** 
+**Symptoms:**
+
 - Canvas height hardcoded to 450 when actual is 376
 - Scaling dividing by 380 instead of 376
 
 **Solution:** Use consistent dimensions everywhere:
+
 ```c
 const int canvas_height = LV_VER_RES - 70;  // 446 - 70 = 376
 #define CANVAS_HEIGHT 376
@@ -327,11 +357,13 @@ const int canvas_height = LV_VER_RES - 70;  // 446 - 70 = 376
 ### ❌ Problem: Trying to Use Non-Existent Functions
 
 **Don't use (these don't exist in LVGL 9):**
+
 - `lv_canvas_draw_line()`
 - `lv_canvas_draw_rect()`
 - `lv_canvas_draw_arc()`
 
 **Use instead:**
+
 ```c
 lv_canvas_init_layer(canvas, &layer);
 lv_draw_line(&layer, &line_dsc);      // Note &layer
@@ -342,6 +374,7 @@ lv_canvas_finish_layer(canvas, &layer);
 ## Maze Game Features
 
 ### Controls
+
 - **Touch left side:** Turn left
 - **Touch right side:** Turn right
 - **Touch center:** Move forward
@@ -349,6 +382,7 @@ lv_canvas_finish_layer(canvas, &layer);
 - **Back button:** Return to launcher (or 3D view from map)
 
 ### Visual Elements
+
 - **Cyan perspective lines:** Create 3D tunnel depth effect
 - **Gray rectangles:** Walls directly ahead
 - **Trapezoid outlines:** Side walls (left/right)

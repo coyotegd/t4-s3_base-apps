@@ -2,7 +2,7 @@ dependencies:
   espressif/cmake_utilities:
     dependencies: []
     source:
-      path: /home/kenneth/test_repos/t4-s3_base-apps/external/hal_bsp/managed_components/espressif__cmake_utilities
+      path: /home/kenneth/Documents/PlatformIO/t4-s3_base-apps/external/hal_bsp/managed_components/espressif__cmake_utilities
       type: local
     version: 1.1.1
   idf:

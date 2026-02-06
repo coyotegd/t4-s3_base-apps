@@ -34,9 +34,13 @@ static lv_obj_t *player_marker = NULL;  // Player position indicator on map
 static lv_obj_t *stats_label = NULL;
 static lv_obj_t *btn_map = NULL;
 static lv_obj_t *btn_back = NULL;
-static lv_obj_t *btn_mode = NULL;
-static lv_obj_t *lbl_mode = NULL;
 static bool showing_map = false;
+
+// Tutorial overlay
+static lv_obj_t *tutorial_label = NULL;
+static lv_timer_t *tutorial_timer = NULL;
+static bool tutorial_active = false;
+static int tutorial_step = 0;  // 0=forward, 1=right, 2=back, 3=left
 
 // Canvas rendering with layer API (required in LVGL 9)
 static void *canvas_buffer = NULL;
@@ -50,7 +54,6 @@ static int maze_row = 8;
 static uint32_t maze_col = 7;
 static int facing = 0;  // 0=north 1=east 2=south 3=west
 static bool suppress_throat_horiz = false;  // Hide inner top/bottom lines after stepping forward
-static bool strict_occupancy_mode = true;   // Draw only occupancy-driven walls (no corner connectors)
 
 // Top controls height (buttons + small margin)
 #define TOP_CONTROLS_H 60
@@ -232,13 +235,15 @@ static void draw_map_view(void);
 static void touch_event_handler(lv_event_t *e);
 static void btn_map_event_cb(lv_event_t *e);
 static void btn_back_event_cb(lv_event_t *e);
-static void btn_mode_event_cb(lv_event_t *e);
 static bool check_wall_at(int row, uint32_t col);
 static void move_forward(void);
+static void move_backward(void);
 static void turn_left(void);
 static void turn_right(void);
 static void check_level_complete(void);
 static void next_level(void);
+static void start_tutorial(void);
+static void stop_tutorial(void);
 
 // Helper function to check if there's a wall at a position
 static bool check_wall_at(int row, uint32_t col) {
@@ -272,6 +277,58 @@ static inline bool check_wall_rel(int off_forward, int off_right) {
             break;
     }
     return check_wall_at(r, (uint32_t)c);
+}
+
+// Occupancy pattern structure for systematic pattern detection
+typedef struct {
+    // Layer 0: Current position (immediate left/right walls)
+    bool L0, R0;
+    // Layer 1: 1 step ahead
+    bool L1, C1, R1;
+    // Layer 2: 2 steps ahead
+    bool L2, C2, R2;
+    // Layer 3: 3 steps ahead
+    bool L3, C3, R3;
+    // Layer 4: 4 steps ahead
+    bool L4, C4, R4;
+    // Layer 5: 5 steps ahead
+    bool L5, C5, R5;
+} occupancy_pattern_t;
+
+// Get occupancy pattern around player (systematic 5-layer × 3-width grid)
+static occupancy_pattern_t get_occupancy_pattern(void) {
+    occupancy_pattern_t pattern = {0};
+    
+    // Layer 0: Immediate sides (current position)
+    pattern.L0 = check_wall_rel(0, -1);
+    pattern.R0 = check_wall_rel(0, 1);
+    
+    // Layer 1: 1 step ahead
+    pattern.L1 = check_wall_rel(1, -1);
+    pattern.C1 = check_wall_rel(1, 0);
+    pattern.R1 = check_wall_rel(1, 1);
+    
+    // Layer 2: 2 steps ahead
+    pattern.L2 = check_wall_rel(2, -1);
+    pattern.C2 = check_wall_rel(2, 0);
+    pattern.R2 = check_wall_rel(2, 1);
+    
+    // Layer 3: 3 steps ahead
+    pattern.L3 = check_wall_rel(3, -1);
+    pattern.C3 = check_wall_rel(3, 0);
+    pattern.R3 = check_wall_rel(3, 1);
+    
+    // Layer 4: 4 steps ahead
+    pattern.L4 = check_wall_rel(4, -1);
+    pattern.C4 = check_wall_rel(4, 0);
+    pattern.R4 = check_wall_rel(4, 1);
+    
+    // Layer 5: 5 steps ahead
+    pattern.L5 = check_wall_rel(5, -1);
+    pattern.C5 = check_wall_rel(5, 0);
+    pattern.R5 = check_wall_rel(5, 1);
+    
+    return pattern;
 }
 
 // Update stats label with direction and position
@@ -332,10 +389,13 @@ static void draw_3d_view(void) {
     // Initialize layer for drawing
     lv_canvas_init_layer(render_container, &layer);
     
-    // Occupancy around the player based on facing direction
-    bool wall_ahead      = check_wall_rel(1,  0);
-    bool wall_left_near  = check_wall_rel(0, -1);
-    bool wall_right_near = check_wall_rel(0,  1);
+    // Get systematic occupancy pattern (5 layers × 3 width)
+    occupancy_pattern_t pattern = get_occupancy_pattern();
+    
+    // Legacy aliases for readability during transition
+    bool wall_ahead      = pattern.C1;
+    bool wall_left_near  = pattern.L0;
+    bool wall_right_near = pattern.R0;
     
     // Replace perspective lines with two rectangle walls toward center (four vertical lines)
     // Opening geometry: centered around screen mid (160,85)
@@ -347,10 +407,12 @@ static void draw_3d_view(void) {
     const int inner_left_x = opening_center_x - (opening_w / 2);
     const int inner_right_x = opening_center_x + (opening_w / 2);
 
-    ESP_LOGI(TAG, "Drawing wireframe based on 2D occupancy");
-    ESP_LOGI(TAG, "Neighbors: ahead=%d left=%d right=%d fwd_left=%d fwd_right=%d",
-             wall_ahead, wall_left_near, wall_right_near,
-             check_wall_rel(1,-1), check_wall_rel(1,1));
+    ESP_LOGI(TAG, "Drawing wireframe based on 2D occupancy pattern");
+    ESP_LOGI(TAG, "L0: L=%d R=%d | L1: L=%d C=%d R=%d | L2: C=%d | L3: L=%d C=%d R=%d",
+             pattern.L0, pattern.R0,
+             pattern.L1, pattern.C1, pattern.R1,
+             pattern.C2,
+             pattern.L3, pattern.C3, pattern.R3);
     // Remove far side small rectangles; use classic diagonals to corners
 
     // Invariant: R9C8 facing North (row=8,col=7,facing=0) with open corridors left/right/ahead
@@ -375,71 +437,76 @@ static void draw_3d_view(void) {
             draw_canvas_line(inner_right_x, inner_bottom_y, 320, inner_bottom_y, LINE_COLOR, 2);        // bottom right extension
         }
 
-        // Perspective connectors: join inner corners to screen center (vanishing point) when in Connect mode
-        if (!strict_occupancy_mode) {
-            const int vanish_x = 160;
-            const int vanish_y = 85;
-            draw_canvas_line_shortened_to(inner_left_x,  inner_top_y,    vanish_x, vanish_y, PERSPECTIVE_SHORTEN, LINE_COLOR, 2);
-            draw_canvas_line_shortened_to(inner_right_x, inner_top_y,    vanish_x, vanish_y, PERSPECTIVE_SHORTEN, LINE_COLOR, 2);
-            draw_canvas_line_shortened_to(inner_left_x,  inner_bottom_y, vanish_x, vanish_y, PERSPECTIVE_SHORTEN, LINE_COLOR, 2);
-            draw_canvas_line_shortened_to(inner_right_x, inner_bottom_y, vanish_x, vanish_y, PERSPECTIVE_SHORTEN, LINE_COLOR, 2);
-        }
-
-        // Far-end vertical connectors at 3 and 5 steps ahead when both side walls exist
+        // Perspective connectors: join inner corners to screen center (vanishing point)
         const int vanish_x = 160;
         const int vanish_y = 85;
-        // Depth factors (0 near throat, 1 at vanishing point)
-        const double t3 = 0.50;  // approx 3 steps
-        const double t5 = 0.75;  // approx 5 steps
+        draw_canvas_line_shortened_to(inner_left_x,  inner_top_y,    vanish_x, vanish_y, PERSPECTIVE_SHORTEN, LINE_COLOR, 2);
+        draw_canvas_line_shortened_to(inner_right_x, inner_top_y,    vanish_x, vanish_y, PERSPECTIVE_SHORTEN, LINE_COLOR, 2);
+        draw_canvas_line_shortened_to(inner_left_x,  inner_bottom_y, vanish_x, vanish_y, PERSPECTIVE_SHORTEN, LINE_COLOR, 2);
+        draw_canvas_line_shortened_to(inner_right_x, inner_bottom_y, vanish_x, vanish_y, PERSPECTIVE_SHORTEN, LINE_COLOR, 2);
+
+        // Far-end vertical connectors showing corridor depth
+        // Depth factors reverse-engineered from original Arduino code's hard-coded coordinates
+        // Original coordinates: depth1=(80,242), depth2=(120,200), depth3=(150,170), depth4=(158,162)
+        // With throat at (20,300) and vanishing point at (160,85):
+        const double t1 = 0.43;  // 1 cube ahead: x=80 from 20, matches original depth 1
+        const double t2 = 0.71;  // 2 cubes ahead: x=120 from 20, matches original depth 2
+        const double t3 = 0.93;  // 3 cubes ahead: x=150 from 20, matches original depth 3
+        const double t4 = 0.99;  // 4 cubes ahead: x=158 from 20, matches original depth 4 (far end)
+        
+        // Draw depth markers showing corridor depth
+        // Draw at each depth where there's still corridor (not blocked)
+        // Draw individual lines even if only one side has a wall (shows depth better)
+        
+        // At 1 step ahead
+        if (!pattern.C1) {
+            int lx1 = (int)(inner_left_x  + t1 * (vanish_x - inner_left_x));
+            int rx1 = (int)(inner_right_x + t1 * (vanish_x - inner_right_x));
+            int y1_top = (int)(inner_top_y     + t1 * (vanish_y - inner_top_y));
+            int y1_bot = (int)(inner_bottom_y  + t1 * (vanish_y - inner_bottom_y));
+            if (pattern.L1) draw_canvas_line(lx1, y1_top, lx1, y1_bot, LINE_COLOR, 2);
+            if (pattern.R1) draw_canvas_line(rx1, y1_top, rx1, y1_bot, LINE_COLOR, 2);
+        }
+        // At 2 steps ahead
+        if (!pattern.C2) {
+            int lx2 = (int)(inner_left_x  + t2 * (vanish_x - inner_left_x));
+            int rx2 = (int)(inner_right_x + t2 * (vanish_x - inner_right_x));
+            int y2_top = (int)(inner_top_y     + t2 * (vanish_y - inner_top_y));
+            int y2_bot = (int)(inner_bottom_y  + t2 * (vanish_y - inner_bottom_y));
+            if (pattern.L2) draw_canvas_line(lx2, y2_top, lx2, y2_bot, LINE_COLOR, 2);
+            if (pattern.R2) draw_canvas_line(rx2, y2_top, rx2, y2_bot, LINE_COLOR, 2);
+        }
         // At 3 steps ahead
-        if (check_wall_rel(3, -1) && check_wall_rel(3, 1)) {
+        if (!pattern.C3) {
             int lx3 = (int)(inner_left_x  + t3 * (vanish_x - inner_left_x));
             int rx3 = (int)(inner_right_x + t3 * (vanish_x - inner_right_x));
             int y3_top = (int)(inner_top_y     + t3 * (vanish_y - inner_top_y));
             int y3_bot = (int)(inner_bottom_y  + t3 * (vanish_y - inner_bottom_y));
-            draw_canvas_line(lx3, y3_top, lx3, y3_bot, LINE_COLOR, 2);
-            draw_canvas_line(rx3, y3_top, rx3, y3_bot, LINE_COLOR, 2);
+            if (pattern.L3) draw_canvas_line(lx3, y3_top, lx3, y3_bot, LINE_COLOR, 2);
+            if (pattern.R3) draw_canvas_line(rx3, y3_top, rx3, y3_bot, LINE_COLOR, 2);
         }
-        // At 5 steps ahead
-        if (check_wall_rel(5, -1) && check_wall_rel(5, 1)) {
-            int lx5 = (int)(inner_left_x  + t5 * (vanish_x - inner_left_x));
-            int rx5 = (int)(inner_right_x + t5 * (vanish_x - inner_right_x));
-            int y5_top = (int)(inner_top_y     + t5 * (vanish_y - inner_top_y));
-            int y5_bot = (int)(inner_bottom_y  + t5 * (vanish_y - inner_bottom_y));
-            draw_canvas_line(lx5, y5_top, lx5, y5_bot, LINE_COLOR, 2);
-            draw_canvas_line(rx5, y5_top, rx5, y5_bot, LINE_COLOR, 2);
+        // At 4 steps ahead (far end - connects diagonal endpoints)
+        if (!pattern.C4) {
+            int lx4 = (int)(inner_left_x  + t4 * (vanish_x - inner_left_x));
+            int rx4 = (int)(inner_right_x + t4 * (vanish_x - inner_right_x));
+            int y4_top = (int)(inner_top_y     + t4 * (vanish_y - inner_top_y));
+            int y4_bot = (int)(inner_bottom_y  + t4 * (vanish_y - inner_bottom_y));
+            // Draw very close to vanishing point - thinner line
+            draw_canvas_line(lx4, y4_top, lx4, y4_bot, LINE_COLOR, 1);
+            draw_canvas_line(rx4, y4_top, rx4, y4_bot, LINE_COLOR, 1);
         }
     }
     
     // Near side walls: draw outer verticals only when wall is present
     if (wall_left_near) {
         draw_canvas_line(0, 0, 0, 170, LINE_COLOR, 2);
-        // If corridor is open, connect edges to inner vertical to emphasize side wall
-        if (!wall_ahead) {
-            if (strict_occupancy_mode) {
-                // Legacy connectors and horizontals for strict mode
-                draw_canvas_line(0, 0, inner_left_x, inner_top_y, LINE_COLOR, 2);
-                draw_canvas_line(0, 170, inner_left_x, inner_bottom_y, LINE_COLOR, 2);
-                draw_canvas_line(0, inner_top_y, inner_left_x, inner_top_y, LINE_COLOR, 2);
-                draw_canvas_line(0, inner_bottom_y, inner_left_x, inner_bottom_y, LINE_COLOR, 2);
-            }
-            // In Connect mode, trapezoid is formed by outer vertical, inner vertical, and diagonals to vanishing point
-            // (diagonals are already drawn from inner corners to center above)
-        }
+        // Trapezoid is formed by outer vertical, inner vertical, and diagonals to vanishing point
+        // (diagonals are already drawn from inner corners to center above)
     }
     if (wall_right_near) {
         draw_canvas_line(320, 0, 320, 170, LINE_COLOR, 2);
-        if (!wall_ahead) {
-            if (strict_occupancy_mode) {
-                // Legacy connectors and horizontals for strict mode
-                draw_canvas_line(320, 0, inner_right_x, inner_top_y, LINE_COLOR, 2);
-                draw_canvas_line(320, 170, inner_right_x, inner_bottom_y, LINE_COLOR, 2);
-                draw_canvas_line(inner_right_x, inner_top_y, 320, inner_top_y, LINE_COLOR, 2);
-                draw_canvas_line(inner_right_x, inner_bottom_y, 320, inner_bottom_y, LINE_COLOR, 2);
-            }
-            // In Connect mode, trapezoid is formed by outer vertical, inner vertical, and diagonals to vanishing point
-            // (diagonals are already drawn from inner corners to center above)
-        }
+        // Trapezoid is formed by outer vertical, inner vertical, and diagonals to vanishing point
+        // (diagonals are already drawn from inner corners to center above)
     }
 
     // Turn-and-step cues removed; handled by conditional diagonals above
@@ -467,15 +534,13 @@ static void draw_3d_view(void) {
         draw_canvas_line(wall_x,        wall_y+wall_h, wall_x+wall_w, wall_y+wall_h, LINE_COLOR, 2); // bottom
         draw_canvas_line(wall_x,        wall_y,        wall_x,        wall_y+wall_h, LINE_COLOR, 2); // left
         draw_canvas_line(wall_x+wall_w, wall_y,        wall_x+wall_w, wall_y+wall_h, LINE_COLOR, 2); // right
-        // In Connect mode, draw perspective connectors from wall corners to vanishing point
-        if (!strict_occupancy_mode) {
-            const int vanish_x = 160;
-            const int vanish_y = 85;
-            draw_canvas_line_shortened_to(wall_x,           wall_y,           vanish_x, vanish_y, PERSPECTIVE_SHORTEN, LINE_COLOR, 2); // top-left corner
-            draw_canvas_line_shortened_to(wall_x+wall_w,    wall_y,           vanish_x, vanish_y, PERSPECTIVE_SHORTEN, LINE_COLOR, 2); // top-right corner
-            draw_canvas_line_shortened_to(wall_x,           wall_y+wall_h,    vanish_x, vanish_y, PERSPECTIVE_SHORTEN, LINE_COLOR, 2); // bottom-left corner
-            draw_canvas_line_shortened_to(wall_x+wall_w,    wall_y+wall_h,    vanish_x, vanish_y, PERSPECTIVE_SHORTEN, LINE_COLOR, 2); // bottom-right corner
-        }
+        // Draw perspective connectors from wall corners to vanishing point
+        const int vanish_x = 160;
+        const int vanish_y = 85;
+        draw_canvas_line_shortened_to(wall_x,           wall_y,           vanish_x, vanish_y, PERSPECTIVE_SHORTEN, LINE_COLOR, 2); // top-left corner
+        draw_canvas_line_shortened_to(wall_x+wall_w,    wall_y,           vanish_x, vanish_y, PERSPECTIVE_SHORTEN, LINE_COLOR, 2); // top-right corner
+        draw_canvas_line_shortened_to(wall_x,           wall_y+wall_h,    vanish_x, vanish_y, PERSPECTIVE_SHORTEN, LINE_COLOR, 2); // bottom-left corner
+        draw_canvas_line_shortened_to(wall_x+wall_w,    wall_y+wall_h,    vanish_x, vanish_y, PERSPECTIVE_SHORTEN, LINE_COLOR, 2); // bottom-right corner
     }
     
     // Side wall overlays can be added here if needed based on wall_left/wall_right
@@ -718,6 +783,47 @@ static void move_forward(void) {
     }
 }
 
+static void move_backward(void) {
+    bool can_move = false;
+    
+    switch (facing) {
+        case 0:  // north - back up is south
+            if (!check_wall_at(maze_row + 1, maze_col)) {
+                maze_row++;
+                can_move = true;
+            }
+            break;
+        case 1:  // east - back up is west
+            if (!check_wall_at(maze_row, maze_col - 1)) {
+                maze_col--;
+                can_move = true;
+            }
+            break;
+        case 2:  // south - back up is north
+            if (!check_wall_at(maze_row - 1, maze_col)) {
+                maze_row--;
+                can_move = true;
+            }
+            break;
+        case 3:  // west - back up is east
+            if (!check_wall_at(maze_row, maze_col + 1)) {
+                maze_col++;
+                can_move = true;
+            }
+            break;
+    }
+    
+    if (can_move) {
+        // Restore throat horizontals when backing up
+        suppress_throat_horiz = false;
+        if (showing_map) {
+            update_player_marker();
+        } else {
+            draw_3d_view();
+        }
+    }
+}
+
 static void turn_left(void) {
     facing--;
     if (facing < 0) {
@@ -795,6 +901,11 @@ static void touch_event_handler(lv_event_t *e) {
     // Process only CLICKED to prevent double move/turn
     if (code != LV_EVENT_CLICKED) return;
     
+    // Stop tutorial on first touch
+    if (tutorial_active) {
+        stop_tutorial();
+    }
+    
     // Ignore touches when showing map view - only Back button should work
     if (showing_map) {
         return;
@@ -806,17 +917,24 @@ static void touch_event_handler(lv_event_t *e) {
     
     ESP_LOGI(TAG, "Touch at X:%d Y:%d", point.x, point.y);
     
-    // Touch screen is divided into 3 vertical sections
-    // left side (x < 200) = turn left
-    // right side (x > 400) = turn right  
-    // center (200 <= x <= 400) = move forward
+    // Touch screen divided into 4 zones:
+    // Left side (x < 200) = turn left
+    // Right side (x > 400) = turn right
+    // Center top (200-400, y < CANVAS_HEIGHT/2 + TOP_CONTROLS_H) = move forward
+    // Center bottom (200-400, y >= CANVAS_HEIGHT/2 + TOP_CONTROLS_H) = back up
     
     if (point.x < 200) {
         turn_left();   // Left side
     } else if (point.x > 400) {
         turn_right();  // Right side
     } else {
-        move_forward();  // Center
+        // Center region - check top vs bottom
+        int center_y = (LV_VER_RES / 2);
+        if (point.y < center_y) {
+            move_forward();  // Center top
+        } else {
+            move_backward(); // Center bottom
+        }
     }
 }
 
@@ -855,22 +973,64 @@ static void btn_back_event_cb(lv_event_t *e) {
     }
 }
 
-// Occupancy mode toggle button handler
-static void btn_mode_event_cb(lv_event_t *e) {
-    if (lv_event_get_code(e) == LV_EVENT_CLICKED) {
-        strict_occupancy_mode = !strict_occupancy_mode;
-        if (lbl_mode) {
-            lv_label_set_text(lbl_mode, strict_occupancy_mode ? "Strict" : "Connect");
-        }
-        if (!showing_map) {
-            draw_3d_view();
-        }
-        ESP_LOGI(TAG, "Strict occupancy mode: %s", strict_occupancy_mode ? "ON" : "OFF");
+// Tutorial system
+static void tutorial_timer_cb(lv_timer_t *timer) {
+    if (!tutorial_active || !tutorial_label) return;
+    
+    // Cycle through steps: 0=forward, 1=right, 2=back, 3=left
+    tutorial_step = (tutorial_step + 1) % 4;
+    
+    const char *texts[] = {"Forward", "Turn\nRight", "Back up", "Turn\nLeft"};
+    const lv_align_t aligns[] = {
+        LV_ALIGN_TOP_MID,
+        LV_ALIGN_RIGHT_MID,
+        LV_ALIGN_BOTTOM_MID,
+        LV_ALIGN_LEFT_MID
+    };
+    const int y_offsets[] = {80, 0, -20, 0};  // Offset from align point
+    const int x_offsets[] = {0, -60, 0, 60};
+    
+    lv_label_set_text(tutorial_label, texts[tutorial_step]);
+    lv_obj_align(tutorial_label, aligns[tutorial_step], x_offsets[tutorial_step], y_offsets[tutorial_step]);
+}
+
+static void start_tutorial(void) {
+    if (tutorial_active) return;
+    
+    tutorial_active = true;
+    tutorial_step = 0;
+    
+    // Create tutorial label
+    tutorial_label = lv_label_create(maze_screen);
+    lv_label_set_text(tutorial_label, "Forward");
+    lv_obj_set_style_text_font(tutorial_label, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(tutorial_label, lv_color_hex(0xFFFF00), 0);  // Yellow
+    lv_obj_set_style_text_align(tutorial_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(tutorial_label, LV_ALIGN_TOP_MID, 0, 80);
+    
+    // Start timer for 500ms cycles
+    tutorial_timer = lv_timer_create(tutorial_timer_cb, 500, NULL);
+}
+
+static void stop_tutorial(void) {
+    if (!tutorial_active) return;
+    
+    tutorial_active = false;
+    
+    if (tutorial_timer) {
+        lv_timer_del(tutorial_timer);
+        tutorial_timer = NULL;
+    }
+    
+    if (tutorial_label) {
+        lv_obj_del(tutorial_label);
+        tutorial_label = NULL;
     }
 }
 
 // Cleanup function
 void ui_maze_cleanup(void) {
+    stop_tutorial();
     // Free canvas buffers
     if (canvas_buffer) {
         heap_caps_free(canvas_buffer);
@@ -895,9 +1055,10 @@ void ui_maze_cleanup(void) {
     stats_label = NULL;
     btn_map = NULL;
     btn_back = NULL;
-    btn_mode = NULL;
-    lbl_mode = NULL;
     showing_map = false;
+    tutorial_label = NULL;
+    tutorial_timer = NULL;
+    tutorial_active = false;
 }
 
 // Main show function
@@ -994,26 +1155,6 @@ void ui_maze_show(void) {
     lv_label_set_text(lbl_map, "Map");
     lv_obj_set_style_text_color(lbl_map, lv_color_white(), 0);
     lv_obj_center(lbl_map);
-
-    // Mode Toggle Button - Neon style
-    btn_mode = lv_btn_create(top_bar);
-    lv_obj_set_size(btn_mode, 120, 50);
-    lv_obj_set_style_bg_opa(btn_mode, LV_OPA_TRANSP, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_color(btn_mode, lv_palette_main(LV_PALETTE_CYAN), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(btn_mode, 3, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_radius(btn_mode, 10, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_shadow_width(btn_mode, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-    // Pressed style
-    lv_obj_set_style_bg_opa(btn_mode, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_PRESSED);
-    lv_obj_set_style_bg_color(btn_mode, lv_palette_main(LV_PALETTE_CYAN), LV_PART_MAIN | LV_STATE_PRESSED);
-    lv_obj_set_style_shadow_width(btn_mode, 20, LV_PART_MAIN | LV_STATE_PRESSED);
-    lv_obj_set_style_shadow_color(btn_mode, lv_palette_main(LV_PALETTE_CYAN), LV_PART_MAIN | LV_STATE_PRESSED);
-    lv_obj_add_event_cb(btn_mode, btn_mode_event_cb, LV_EVENT_CLICKED, NULL);
-
-    lbl_mode = lv_label_create(btn_mode);
-    lv_label_set_text(lbl_mode, strict_occupancy_mode ? "Strict" : "Connect");
-    lv_obj_set_style_text_color(lbl_mode, lv_color_white(), 0);
-    lv_obj_center(lbl_mode);
     
     // Back Button - Neon style
     btn_back = lv_btn_create(top_bar);
@@ -1041,4 +1182,7 @@ void ui_maze_show(void) {
     
     // Load screen; size event will allocate and draw 3D view
     lv_screen_load(maze_screen);
+    
+    // Start tutorial overlay
+    start_tutorial();
 }
