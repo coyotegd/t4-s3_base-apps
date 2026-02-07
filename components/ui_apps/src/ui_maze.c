@@ -45,6 +45,7 @@ static int tutorial_step = 0;  // 0=forward, 1=right, 2=back, 3=left
 // Canvas rendering with layer API (required in LVGL 9)
 static void *canvas_buffer = NULL;
 static void *player_marker_buffer = NULL;
+static void *map_buffer = NULL;
 static lv_layer_t layer;
 
 static int level = 0;
@@ -627,7 +628,13 @@ static void draw_map_view(void) {
         int full_map_size = 32 * cell_size;  // 576 pixels
         size_t map_buf_size = full_map_size * full_map_size * sizeof(lv_color_t);
         
-        void *map_buffer = heap_caps_malloc(map_buf_size, MALLOC_CAP_SPIRAM);
+        // Free existing map buffer if it was allocated
+        if (map_buffer) {
+            heap_caps_free(map_buffer);
+            map_buffer = NULL;
+        }
+        
+        map_buffer = heap_caps_malloc(map_buf_size, MALLOC_CAP_SPIRAM);
         if (!map_buffer) {
             ESP_LOGE(TAG, "Failed to allocate map buffer");
             return;
@@ -1039,6 +1046,10 @@ void ui_maze_cleanup(void) {
     if (player_marker_buffer) {
         heap_caps_free(player_marker_buffer);
         player_marker_buffer = NULL;
+    }
+    if (map_buffer) {
+        heap_caps_free(map_buffer);
+        map_buffer = NULL;
     }
     
     if (maze_screen) {
