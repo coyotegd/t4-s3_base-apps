@@ -10,6 +10,10 @@ static lv_obj_t *weather_screen = NULL;
 static void btn_back_event_cb(lv_event_t *e) {
     if (lv_event_get_code(e) == LV_EVENT_CLICKED) {
         ESP_LOGI(TAG, "Back button clicked");
+        
+        // Clean up weather screen before navigating back
+        ui_weather_cleanup();
+        
         ui_launcher_show();
     }
 }
