@@ -9,6 +9,9 @@
 #include <time.h>
 #include <sys/time.h>
 
+// External image declaration
+LV_IMAGE_DECLARE(img_lilygo);
+
 static const char *TAG = "ui_launcher";
 
 static lv_obj_t *launcher_screen = NULL;
@@ -198,8 +201,23 @@ void ui_launcher_init(void) {
     lv_obj_set_style_border_width(main_cont, 0, 0);
     lv_obj_set_style_pad_all(main_cont, 10, 0);
 
-    // Title: "LilyGo T4-S3 & Me" (Gold Color) - Centered between status bar and buttons
-    lv_obj_t * lbl_title = lv_label_create(main_cont);
+    // Title Row: Image + Text
+    lv_obj_t * title_row = lv_obj_create(main_cont);
+    lv_obj_remove_flag(title_row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(title_row, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(title_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(title_row, 0, 0);
+    lv_obj_set_flex_flow(title_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(title_row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_gap(title_row, 15, 0);
+    lv_obj_set_style_pad_all(title_row, 0, 0);
+
+    // LilyGo Logo Image
+    lv_obj_t * img_logo = lv_image_create(title_row);
+    lv_image_set_src(img_logo, &img_lilygo);
+
+    // Title Text: "LilyGo T4-S3 & Me" (Gold Color)
+    lv_obj_t * lbl_title = lv_label_create(title_row);
     lv_label_set_text(lbl_title, "LilyGo T4-S3 & Me");
     lv_obj_set_style_text_font(lbl_title, &lv_font_montserrat_30, 0);
     lv_obj_set_style_text_color(lbl_title, lv_color_hex(0xFFD700), 0); // Gold
