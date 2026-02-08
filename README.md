@@ -6,7 +6,7 @@ This is a Parent-Child ESP32-S3 application using the t4-s3_hal_bsp-lvgl as base
 
 | Child Close-up View                                  | Child Overview                                      | Parent Close-up View                            |
 | :--------------------------------------------------: | :-------------------------------------------------: | :---------------------------------------------: |
-| ![LilyGo T4-S3 Close-up](docs/images/lilyclose.png) | ![LilyGo T4-S3 Overview](docs/images/lilyfar.png)  | ![Parent UI Home](docs/images/ui_home.png)     |
+| ![LilyGo T4-S3 Close-up](docs/images/lilyclose.png)  |  ![LilyGo T4-S3 Overview](docs/images/lilyfar.png)  |    ![Parent UI Home](docs/images/ui_home.png)   |
 
 ## �🚀 Quick Start for Beginners
 
