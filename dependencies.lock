@@ -5,13 +5,24 @@ dependencies:
       path: /home/kenneth/Documents/PlatformIO/t4-s3_base-apps/external/hal_bsp/managed_components/espressif__cmake_utilities
       type: local
     version: 1.1.1
+  espressif/libjpeg-turbo:
+    component_hash: 41100fd5c4fe44e3f4754a60b2828ed018b42ecce799bf0e2993d5a1977c8913
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 3.1.1~1
   idf:
     source:
       type: idf
     version: 5.5.1
 direct_dependencies:
 - espressif/cmake_utilities
+- espressif/libjpeg-turbo
 - idf
-manifest_hash: ea8a7c681ac58a794c5240441f14e4f9dab9ad4892f2b42e00e1b8dd867f4b75
+manifest_hash: 8e15876b460fdda698f92db645bf330738c2ae6b07eef27f937d676d7e9f60d1
 target: esp32s3
 version: 2.0.0
